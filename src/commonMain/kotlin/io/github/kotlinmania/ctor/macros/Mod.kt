@@ -5,34 +5,35 @@ import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
 
 /**
- * Doc-hidden support module backing the [ctor] and [dtor] runtime registration
- * APIs.
+ * Support module backing the [io.github.kotlinmania.ctor.ctor] and
+ * [io.github.kotlinmania.ctor.dtor] runtime registration APIs.
  *
- * The upstream Rust crate emits inline expansions of the [ctor]/[dtor]
- * attribute macros that wire a function into the target platform's linker
- * sections (`.init_array` on Linux, `__DATA,__mod_init_func,mod_init_funcs`
- * on Apple, `.CRT$XCU` on Windows, `.text.startup`/`.text.exit` for
- * shutdown). Kotlin Multiplatform has no equivalent linker hook: code that
- * runs strictly before main is unsupported across every target this repo
- * ships, and most stdlib services are not safe to call from such a hook
- * even where the platform exposes one. The Kotlin port therefore translates
- * each attribute macro into a runtime registration call. Consumers register
+ * The upstream Rust crate emits inline expansions of the constructor and
+ * destructor attribute macros that wire a function into the target
+ * platform's linker sections — the init-array on Linux, the mod-init-func
+ * data section on Apple, the C runtime init section on Windows, the
+ * startup and exit text sections for shutdown. Kotlin Multiplatform has no
+ * equivalent linker hook: code that runs strictly before main is
+ * unsupported across every target this repo ships, and most standard
+ * library services are not safe to call from such a hook even where the
+ * platform exposes one. The Kotlin port therefore translates each
+ * attribute macro into a runtime registration call. Consumers register
  * blocks during normal module initialization (or eagerly at the top of
  * `main`) and trigger them with [runCtors]. Destructors mirror the C
- * `atexit` contract and are released in LIFO order from [runDtors].
+ * runtime at-exit contract and are released in last-in-first-out order
+ * from [runDtors].
  *
- * `pub use crate::__ctor_call as ctor_call;`
- * `pub use crate::__ctor_entry as ctor_entry;`
- * `pub use crate::__ctor_link_section as ctor_link_section;`
- * `pub use crate::__ctor_link_section_attr as ctor_link_section_attr;`
- * `pub use crate::__ctor_parse as ctor_parse;`
- * `pub use crate::__dtor_entry as dtor_entry;`
- * `pub use crate::__dtor_parse as dtor_parse;`
- * `pub use crate::__if_has_feature as if_has_feature;`
- * `pub use crate::__if_unsafe as if_unsafe;`
- * `pub use crate::__include_no_warn_on_missing_unsafe_feature as include_no_warn_on_missing_unsafe_feature;`
- * `pub use crate::__include_used_linker_feature as include_used_linker_feature;`
- * `pub use crate::__unify_features as unify_features;`
+ * Upstream re-exports the following macro-rules helpers from this module:
+ * the constructor call expander, the constructor entry shim, the
+ * link-section selector, the link-section attribute applier, the
+ * declarative-form constructor parser, the destructor entry shim, the
+ * declarative-form destructor parser, the feature-array dispatcher, the
+ * unsafe-marker dispatcher, the no-warn-on-missing-unsafe feature gate,
+ * the used-linker feature gate, and the feature unifier. Every one of
+ * those re-exports is a declarative macro whose entire job is compile-time
+ * code generation; the Kotlin port collapses each into a runtime function
+ * on this object so callers that translated the upstream declarative form
+ * keep the same call shape.
  */
 public object Support {
     private val ctorBlocks: AtomicReference<List<CtorBlock>> = AtomicReference(emptyList())
@@ -41,52 +42,55 @@ public object Support {
     /**
      * Return type for the constructor. Why is this needed?
      *
-     * On Windows, `.CRT$XIA` … `.CRT$XIZ` constructors are required to return
-     * an unsigned integer value. The Rust crate cannot know whether the user
-     * is putting this function into a retval-requiring section or a
-     * non-retval section, so it just returns an unsigned integer value which
-     * is always valid and just ignored if not needed.
+     * On Windows, init-term constructors in the C runtime init section are
+     * required to return an unsigned integer value. The upstream Rust
+     * crate cannot know whether the user is putting this function into a
+     * retval-requiring section or a non-retval section, so it just
+     * returns an unsigned integer value which is always valid and just
+     * ignored if not needed.
      *
-     * Miri is pedantic about this, so the upstream crate returns `Unit` if
-     * running under miri. The Kotlin port has no linker section to satisfy,
-     * so the return type collapses to [Unit] on every target.
+     * Miri is pedantic about this, so the upstream crate returns the unit
+     * type if running under Miri. The Kotlin port has no linker section
+     * to satisfy, so the return type collapses to [Unit] on every target.
      *
-     * See [initterm](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/initterm-initterm-e?view=msvc-170)
+     * See the Microsoft init-term reference for the upstream Windows-init
+     * contract.
      */
     public fun ctorRetType(): Unit = Unit
 
     /**
-     * Parse a `ctor`-annotated item as if it were a proc-macro.
+     * Parse a constructor-annotated item as if it were a procedural macro.
      *
-     * In Rust this is the declarative form of the `ctor` attribute macro
-     * that supports both function and static-item shapes. In Kotlin the
-     * declarative form has no syntactic counterpart: every registration —
-     * whether of an init function or of a lazily computed static — funnels
-     * through [ctorEntry]. Static-item registrations therefore take a
-     * computation lambda whose result is observable through the returned
-     * [CtorStatic] handle once [runCtors] has fired.
+     * In Rust this is the declarative form of the constructor attribute
+     * macro that supports both function and static-item shapes. In Kotlin
+     * the declarative form has no syntactic counterpart: every
+     * registration — whether of an init function or of a lazily computed
+     * static — funnels through [ctorEntry]. Static-item registrations
+     * therefore take a computation lambda whose result is observable
+     * through the returned [CtorStatic] handle once [runCtors] has fired.
      */
     public fun ctorParse(block: () -> Unit): CtorBlock = ctorEntry(block)
 
     /**
-     * Parse a `dtor`-annotated item as if it were a proc-macro.
+     * Parse a destructor-annotated item as if it were a procedural macro.
      *
-     * As with [ctorParse] the declarative and attribute forms collapse to a
-     * single runtime registration in Kotlin.
+     * As with [ctorParse] the declarative and attribute forms collapse to
+     * a single runtime registration in Kotlin.
      */
     public fun dtorParse(block: () -> Unit): DtorBlock = dtorEntry(block)
 
     /**
      * Register a constructor block with the global registry.
      *
-     * Upstream wraps the user function in an `extern "C"` thunk that the
-     * platform's startup machinery invokes through one of the
-     * `.init_array`/`__mod_init_func`/`.CRT$XCU` table entries. The
-     * `target_family = "wasm"` branch additionally guards the body with an
-     * `AtomicBool` so repeat invocations from the wasm entrypoint do not
-     * run the user body more than once. The Kotlin port owns the same
-     * guarantee directly: [runCtors] is idempotent and each registered
-     * [CtorBlock] tracks whether it has already fired.
+     * Upstream wraps the user function in an external-linkage thunk that
+     * the platform's startup machinery invokes through one of the
+     * platform-specific table entries (the init-array on Linux, the
+     * mod-init-func data section on Apple, the C runtime init section on
+     * Windows). The wasm branch additionally guards the body with an
+     * atomic boolean so repeat invocations from the wasm entrypoint do
+     * not run the user body more than once. The Kotlin port owns the
+     * same guarantee directly: [runCtors] is idempotent and each
+     * registered [CtorBlock] tracks whether it has already fired.
      */
     public fun ctorEntry(block: () -> Unit): CtorBlock {
         val handle = CtorBlock(block)
@@ -97,11 +101,12 @@ public object Support {
     /**
      * Register a destructor block with the global registry.
      *
-     * Upstream binds the destructor through `atexit` on most platforms and
-     * `__cxa_atexit` on Apple, scoped to the `__dso_handle`. The Kotlin
-     * port instead returns a [DtorBlock] handle that callers thread into
-     * [runDtors] when the host is ready to tear down. Destructors run in
-     * LIFO order to mirror the upstream contract.
+     * Upstream binds the destructor through the C runtime at-exit hook on
+     * most platforms and a scoped at-exit hook tied to the dynamic shared
+     * object handle on Apple. The Kotlin port instead returns a
+     * [DtorBlock] handle that callers thread into [runDtors] when the
+     * host is ready to tear down. Destructors run in last-in-first-out
+     * order to mirror the upstream contract.
      */
     public fun dtorEntry(block: () -> Unit): DtorBlock {
         val handle = DtorBlock(block)
@@ -112,8 +117,8 @@ public object Support {
     /**
      * Invoke every registered constructor that has not already fired.
      *
-     * Code note: upstream guards repeat invocation on wasm with an
-     * `AtomicBool` swap. The Kotlin port honors the same invariant on every
+     * Code note: upstream guards repeat invocation on wasm with an atomic
+     * boolean swap. The Kotlin port honors the same invariant on every
      * target — once a constructor has run, subsequent calls to [runCtors]
      * skip it. New constructors registered after a prior [runCtors] call
      * are picked up by the next invocation.
@@ -126,16 +131,17 @@ public object Support {
     }
 
     /**
-     * Invoke every registered destructor that has not already fired, in the
-     * reverse order of registration.
+     * Invoke every registered destructor that has not already fired, in
+     * the reverse order of registration.
      *
-     * You might wonder why upstream does not use
-     * `__attribute__((destructor))` for `dtor`. Unfortunately mingw does
-     * not appear to properly support section-based hooks for shutdown
-     * (see the mingw-w64 `crtdll.c` reference), and Apple has removed
-     * support for section-based shutdown hooks after warning about it for a
-     * number of years. The Kotlin port has no shutdown hook at all and
-     * exposes [runDtors] as the explicit teardown entrypoint.
+     * You might wonder why upstream does not use a destructor attribute
+     * via the platform linker for the destructor side. Unfortunately
+     * mingw does not appear to properly support section-based hooks for
+     * shutdown (see the mingw-w64 C runtime DLL implementation), and
+     * Apple has removed support for section-based shutdown hooks after
+     * warning about it for a number of years. The Kotlin port has no
+     * shutdown hook at all and exposes [runDtors] as the explicit
+     * teardown entrypoint.
      */
     public fun runDtors() {
         val snapshot = dtorBlocks.load()
@@ -147,19 +153,18 @@ public object Support {
     /**
      * Annotate a block with its appropriate link section.
      *
-     * Upstream branches on `features=[..]` to decide between the
-     * `used(linker)` and bare `used` attribute forms, then expands a
-     * platform-specific `link_section` chain covering
-     * `.init_array`/`.ctors`/`__DATA,__mod_init_func,mod_init_funcs`/
-     * `.CRT$XCU`. The Kotlin port has no link section, so [ctorCall]
-     * collapses to a direct dispatch through [ctorEntry].
+     * Upstream branches on the active feature list to decide between two
+     * forms of the linker-used attribute, then expands a platform-specific
+     * link-section chain covering each supported target. The Kotlin port
+     * has no link section, so [ctorCall] collapses to a direct dispatch
+     * through [ctorEntry].
      */
     public fun ctorCall(block: () -> Unit): CtorBlock = ctorEntry(block)
 
     /**
      * Apply either the default platform-based link section attributes, or
-     * the overridden `link_section` attribute, depending on whether the
-     * `(link_section = ...)` feature is present in the features array.
+     * the overridden link-section attribute, depending on whether the
+     * link-section feature is present in the features list.
      *
      * The Kotlin port preserves the entrypoint for caller compatibility
      * but has no link section to apply.
@@ -168,27 +173,28 @@ public object Support {
 
     /**
      * Apply either the default link section attributes, or the overridden
-     * `link_section` attribute. Equivalent collapse to [ctorLinkSection].
+     * link-section attribute. Equivalent collapse to [ctorLinkSection].
      */
     public fun ctorLinkSectionAttr(block: () -> Unit): CtorBlock = ctorEntry(block)
 
     /**
-     * If the features array contains the requested feature, return
+     * If the features list contains the requested feature, return
      * [ifTrue], otherwise return [ifFalse].
      *
      * Upstream is a macro that walks a recursively spelled feature list
-     * such as `[(link_section = ".ctors"), used_linker, __warn_on_missing_unsafe, ]`.
-     * The Kotlin port keeps the feature list runtime-shaped — see
-     * [Feature] — and dispatches on a literal value match.
+     * that mixes plain identifiers with key-value pairs such as a
+     * link-section override or a crate-path override. The Kotlin port
+     * keeps the feature list runtime-shaped — see [Feature] — and
+     * dispatches on a literal value match.
      */
     public fun <T> ifHasFeature(feature: Feature, features: List<Feature>, ifTrue: () -> T, ifFalse: () -> T): T =
         if (features.any { it == feature }) ifTrue() else ifFalse()
 
     /**
-     * Choose the `unsafe` branch if the `unsafe` marker is present in the
+     * Choose the unsafe branch if the unsafe marker is present in the
      * upstream declaration, otherwise the safe branch.
      *
-     * Kotlin has no `unsafe` keyword. The marker is preserved as a runtime
+     * Kotlin has no unsafe keyword. The marker is preserved as a runtime
      * flag so callers translating the declarative form can keep the same
      * conditional shape.
      */
@@ -196,17 +202,17 @@ public object Support {
         if (isUnsafe) ifUnsafe() else ifSafe()
 
     /**
-     * If the `used_linker` cargo feature is active, return [ifTrue],
+     * If the used-linker Cargo feature is active, return [ifTrue],
      * otherwise [ifFalse].
      *
-     * The Kotlin port has no equivalent of the `used_linker` Cargo feature.
+     * The Kotlin port has no equivalent of the used-linker Cargo feature.
      * The entrypoint is retained for caller compatibility and always
      * returns the [ifFalse] branch.
      */
     public fun <T> includeUsedLinkerFeature(ifTrue: () -> T, ifFalse: () -> T): T = ifFalse()
 
     /**
-     * If the `__no_warn_on_missing_unsafe` cargo feature is active, return
+     * If the no-warn-on-missing-unsafe Cargo feature is active, return
      * [ifTrue], otherwise [ifFalse].
      *
      * The Kotlin port carries no missing-unsafe deprecation warning so the
@@ -215,14 +221,16 @@ public object Support {
     public fun <T> includeNoWarnOnMissingUnsafeFeature(ifTrue: () -> T, ifFalse: () -> T): T = ifFalse()
 
     /**
-     * Extract `ctor`/`dtor` attribute parameters and crate features and
-     * turn them into a unified feature array.
+     * Extract constructor and destructor attribute parameters and crate
+     * features and turn them into a unified feature list.
      *
      * Supported attributes:
      *
-     *  - `used(linker)` → feature: `used_linker`
-     *  - `link_section = ...` → feature: `(link_section = ...)`
-     *  - `crate_path = ...` → feature: `(crate_path = ...)`
+     *  - The linker-used flag becomes the used-linker feature.
+     *  - The link-section override becomes a link-section feature entry
+     *    carrying the section name.
+     *  - The crate-path override becomes a crate-path feature entry
+     *    carrying the path.
      */
     public fun unifyFeatures(meta: List<Meta>): List<Feature> {
         val features = mutableListOf<Feature>()
@@ -272,8 +280,8 @@ public class CtorBlock internal constructor(private val block: () -> Unit) {
     /**
      * Run the registered constructor body if it has not already run.
      *
-     * Mirrors the upstream `__CTOR__INITILIZED.swap(true, Relaxed)` guard
-     * but applies on every target instead of only on wasm.
+     * Mirrors the upstream wasm initialized-flag swap guard but applies on
+     * every target instead of only on wasm.
      */
     public fun fire() {
         if (invoked.compareAndSet(false, true)) {
@@ -305,13 +313,13 @@ public class DtorBlock internal constructor(private val block: () -> Unit) {
 /**
  * Static-item form of a [CtorBlock] registration.
  *
- * Upstream expands a `static FOO: TYPE = unsafe { ... }` annotated with
- * `#[ctor]` into a `OnceLock<TYPE>`-backed wrapper that derefs to the
- * computed value, plus a synthesized `init_foo_ctor` function that pokes
- * the `OnceLock` from a constructor section. The Kotlin port models the
- * shape directly: the [value] accessor lazily forces the initializer on
- * first read, and constructing the handle registers a poke into the
- * global constructor registry so [Support.runCtors] forces it eagerly.
+ * Upstream expands a static item annotated with the constructor attribute
+ * into a lock-once-backed wrapper that derefs to the computed value, plus
+ * a synthesized initializer function that pokes the lock from a
+ * constructor section. The Kotlin port models the shape directly: the
+ * [value] accessor lazily forces the initializer on first read, and
+ * constructing the handle registers a poke into the global constructor
+ * registry so [Support.runCtors] forces it eagerly.
  */
 public class CtorStatic<T : Any> internal constructor(private val init: () -> T) {
     private val storage: AtomicReference<T?> = AtomicReference(null)
@@ -340,9 +348,9 @@ public class CtorStatic<T : Any> internal constructor(private val init: () -> T)
 }
 
 /**
- * Construct a [CtorStatic] handle for a `#[ctor]`-annotated static item.
+ * Construct a [CtorStatic] handle for a constructor-annotated static item.
  *
- * Mirrors the `static FOO: TYPE = unsafe { ... }` expansion.
+ * Mirrors the upstream static-item expansion.
  */
 public fun <T : Any> ctorStatic(init: () -> T): CtorStatic<T> = CtorStatic(init)
 
@@ -357,24 +365,24 @@ public typealias CtorBlockFn = () -> Unit
 public typealias DtorBlockFn = () -> Unit
 
 /**
- * Unified feature array entry. Upstream walks a token-tree representation
+ * Unified feature list entry. Upstream walks a token-tree representation
  * of the same set in [Support.ifHasFeature]; the Kotlin port carries the
  * data as a sealed hierarchy.
  */
 public sealed class Feature {
-    /** Equivalent of the `used_linker` Cargo feature. */
+    /** Equivalent of the used-linker Cargo feature. */
     public object UsedLinker : Feature()
 
-    /** Equivalent of the `__no_warn_on_missing_unsafe` Cargo feature. */
+    /** Equivalent of the no-warn-on-missing-unsafe Cargo feature. */
     public object NoWarnOnMissingUnsafe : Feature()
 
-    /** Equivalent of the `anonymous` attribute parameter. */
+    /** Equivalent of the anonymous attribute parameter. */
     public object Anonymous : Feature()
 
-    /** Equivalent of `link_section = "section"`. */
+    /** Equivalent of a link-section override carrying a section name. */
     public data class LinkSection(public val section: String) : Feature()
 
-    /** Equivalent of `crate_path = ::path::to::ctor::crate`. */
+    /** Equivalent of a crate-path override carrying a path. */
     public data class CratePath(public val path: String) : Feature()
 }
 
