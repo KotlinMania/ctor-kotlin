@@ -1,208 +1,165 @@
 // port-lint: source src/lib.rs
 package io.github.kotlinmania.ctor
 
+import io.github.kotlinmania.ctor.macros.CtorBlock
+import io.github.kotlinmania.ctor.macros.DtorBlock
 import io.github.kotlinmania.ctor.macros.Support
 
-/*
- * Runtime port of the upstream `ctor` crate's module-level documentation:
+/**
+ * Runtime forms of the constructor and destructor registration helpers.
  *
- * Procedural macro for defining global constructor/destructor functions.
+ * The upstream Rust crate exposes module initialization and teardown hooks
+ * (analogous to constructor and destructor attributes in C/C++) for Linux,
+ * OSX, and Windows via the [ctor] and [dtor] attribute macros.
  *
- * Upstream provides module initialization/teardown functions for Rust (like
- * `__attribute__((constructor))` in C/C++) for Linux, OSX, and Windows via
- * the `#[ctor]` and `#[dtor]` macros. Upstream works and is regularly tested
- * on Linux, OSX and Windows, with both `+crt-static` and `-crt-static`. Other
- * platforms are supported but not tested as part of upstream's automatic
- * builds. The upstream crate also works as expected in both `bin` and
- * `cdylib` outputs: the `ctor` and `dtor` run at executable or library
- * startup/shutdown respectively.
+ * The upstream crate works and is regularly tested on Linux, OSX, and
+ * Windows, with both statically and dynamically linked C runtime variants.
+ * Other platforms are supported but not tested as part of the upstream
+ * automatic builds. Upstream also works as expected in both executable and
+ * shared library outputs: the constructor and destructor run at executable
+ * or library startup and shutdown respectively.
  *
- * Upstream currently requires Rust > `1.31.0` at a minimum for the
- * procedural macro support; the upstream sets `recursion_limit = "256"` to
- * accommodate the macro_rules-driven attribute parsing.
+ * Kotlin Multiplatform has no equivalent of linker-section-driven pre-main
+ * hooks on any target this repo ships. The Kotlin port therefore exposes
+ * the same surface as a runtime registry: register a block with [ctor] (or
+ * [dtor]) and trigger the registered queue with [runCtors] (or [runDtors]).
+ * Consumers can register during normal top-level initialization (Kotlin
+ * runs `val` and `init` expressions when the enclosing object is first
+ * referenced), and trigger as early as the host wants — typically from the
+ * top of `main` or from a test fixture's setup hook.
  *
- * Kotlin Multiplatform has no loader-level hook portable across the supported
- * targets (JVM, Kotlin/Native, Kotlin/JS, Kotlin/Wasm), so this port replaces
- * the proc-macro/macro_rules surface with a runtime registry. The public API
- * is two functions, [ctor] and [dtor], plus the manual drain entry point
- * [runDtors]. The internal registry lives in [io.github.kotlinmania.ctor.macros.Support].
+ * Upstream sets a macro-expansion recursion limit of 256. The Kotlin port
+ * has no macro expansion to limit.
  *
- * Upstream re-exports `macros::__support` at the crate root (`pub use
- * macros::__support`); per the kotlinmania re-export discipline that
- * re-export is documented here in prose rather than reproduced as a Kotlin
- * `typealias`.
+ * Upstream re-exports the support module at the crate root so that nested
+ * macro expansions can reference helpers through a single path. The Kotlin
+ * port has no nested macros; callers import members of
+ * [io.github.kotlinmania.ctor.macros.Support] directly. The
+ * [io.github.kotlinmania.ctor.declarative] subpackage is preserved as a
+ * tracking ledger only, per the workspace re-export discipline.
  */
 
 /**
- * Marks a block as a library/executable constructor.
+ * Marks a function or static block as a library/executable constructor.
  *
- * Upstream Rust uses OS-specific linker sections to call a specific function
- * at load time. In Kotlin Multiplatform there is no portable equivalent, so
- * this function invokes [block] synchronously on the calling thread and also
- * records it in the global ctor registry. Callers that want lazy-on-first-use
- * semantics for a static value should place the [ctor] call inside a
- * top-level `val` initializer; the Kotlin runtime will then defer execution
- * until the property is first read on JS and Wasm, and eagerly run it on
- * Kotlin/Native and Android initialization on the JVM.
+ * Upstream uses platform-specific linker sections to call a specific
+ * function at load time. The Kotlin port registers the block with the
+ * global constructor registry and runs it from [runCtors].
  *
- * Important notes (translated upstream):
+ * # Important notes
  *
- * Rust does not make any guarantees about stdlib support for life-before or
- * life-after main. This means that the upstream `ctor` crate may not work as
- * expected in some cases, such as when used in an `async` runtime or making
- * use of stdlib services. The Kotlin port has the same caveat in spirit:
- * blocks registered with [ctor] should be minimal and free of coroutine
- * dispatchers or platform services that may not yet be initialized.
+ * The Rust standard library makes no guarantees about life-before or
+ * life-after main. This means that the upstream crate may not work as
+ * expected in some cases, such as when used in an asynchronous runtime or
+ * making use of standard-library services. In the Kotlin port there is no
+ * life-before-main at all: registered blocks only run when [runCtors] is
+ * called, so the order of effects is fully under the host's control.
  *
  * Multiple startup blocks are supported, but the invocation order is not
- * guaranteed.
+ * guaranteed by upstream. The Kotlin port runs them in registration order
+ * to match the order in which the registry was populated, but consumers
+ * should not rely on it.
  *
- * Upstream supports a `crate_path` attribute parameter that redirects the
- * proc-macro's generated code to a re-exported crate. The Kotlin port is a
- * plain function call, so that knob has no analog.
+ * The upstream crate assumes it is available as a direct dependency. If a
+ * caller re-exports its items as part of its own crate, the upstream macro
+ * exposes a crate-path parameter that redirects the macro's output to the
+ * correct crate. The Kotlin port has no macro expansion to redirect.
  *
- * Attribute parameters supported by the upstream `#[ctor]` proc-macro:
+ * # Attribute parameters
  *
- *  - `crate_path = ::path::to::ctor::crate`: redirects the macro's output to
- *    a re-exported crate (no Kotlin analog; the function call is direct).
- *  - `used(linker)`: (advanced) marks the function as being used in the link
- *    phase (no Kotlin analog).
- *  - `link_section = "section"`: pins the constructor to a specific linker
- *    section (no Kotlin analog).
- *  - `anonymous`: omits the constructor's name in the generated code, which
- *    allows multiple constructors with the same name. Kotlin allows multiple
- *    `val` initializers in the same file without naming conflicts, so the
- *    `anonymous` form has no separate Kotlin shape.
+ *  - A crate-path override: the path to the support module containing the
+ *    helpers. Useful in Rust when re-exporting items; not applicable in
+ *    Kotlin.
+ *  - A linker-used flag: marks the function as being used in the link
+ *    phase. Not applicable in Kotlin.
+ *  - A link-section override: the section to place the constructor in.
+ *    Not applicable in Kotlin.
+ *  - An anonymous flag: omits the constructor's name in the generated
+ *    code (allows multiple constructors with the same name). In Kotlin
+ *    every registration is anonymous to the registry; the returned
+ *    [CtorBlock] handle is the only identity.
  *
- * Examples (translated from upstream KDoc):
+ * # Examples
  *
  * Print a startup message:
  *
- * ```kotlin
- * val helloCtor = ctor {
- *     println("Hello, world!")
- * }
- * ```
- *
- * Make changes to "static" values:
- *
- * ```kotlin
- * val inited = atomic(false)
- *
- * val setInited = ctor {
- *     inited.store(true)
- * }
- * ```
- *
- * Initialize a `Map` at startup time:
- *
- * ```kotlin
- * val staticCtor: Map<UInt, String> = ctorStatic {
- *     val m = HashMap<UInt, String>()
- *     for (i in 0u..99u) {
- *         m[i] = "x*100=${i * 100u}"
+ *     val helloCtor = ctor {
+ *         println("Hello, world!")
  *     }
- *     m
- * }
- * ```
  *
- * Upstream details: the `#[ctor]` macro makes use of linker sections to
- * ensure that a function is run at startup time. Approximately:
- *
- * ```text
- * #[used]
- * #[cfg_attr(target_os = "linux", link_section = ".init_array")]
- * #[cfg_attr(target_vendor = "apple", link_section = "__DATA,__mod_init_func,mod_init_funcs")]
- * #[cfg_attr(target_os = "windows", link_section = ".CRT$XCU")]
- * /* ... other platforms elided ... */
- * static INIT_FN: extern fn() = {
- *     extern fn init_fn() { myInitFn() }
- *     init_fn
- * }
- * ```
- *
- * For `static` items, the upstream macro generates a
- * `std::sync::OnceLock` that is initialized at startup time. The Kotlin
- * equivalent of `OnceLock` is `kotlin.lazy { ... }`, which [ctorStatic]
- * wraps with an eager invocation so that initialization happens at the
- * registration call site instead of on first access.
- */
-public fun ctor(block: () -> Unit) {
-    Support.ctorParse(block)
-}
-
-/**
- * Eagerly initialize a "static" value and record the initializer in the ctor
- * registry, mirroring upstream's `#[ctor] static FOO: T = unsafe { ... };`
- * pattern.
- *
- * Upstream's macro generates a `std::sync::OnceLock<T>` plus a
- * `Deref` impl that invokes the initializer on first access, then registers
- * a synthetic ctor that forces the lock to populate at startup time so the
- * value is effectively eagerly initialized. The Kotlin equivalent is simpler:
- * the initializer runs immediately when [ctorStatic] is called, the value is
- * returned for direct assignment to a `val`, and the same block is also
- * recorded with [Support.ctorParse] so the global ctor list reflects it.
- *
- * Example:
- *
- * ```kotlin
- * val staticCtor: Map<UInt, String> = ctorStatic {
- *     val m = HashMap<UInt, String>()
- *     for (i in 0u..99u) {
- *         m[i] = "x*100=${i * 100u}"
+ *     fun main() {
+ *         runCtors()
+ *         println("main()")
  *     }
- *     m
- * }
- * ```
+ *
+ * Make changes to a shared variable:
+ *
+ *     val inited = AtomicReference(false)
+ *
+ *     val setInited = ctor {
+ *         inited.store(true)
+ *     }
+ *
+ * Initialize a Map at startup time:
+ *
+ *     val staticCtor: CtorStatic<Map<Int, String>> = ctorStatic {
+ *         buildMap {
+ *             for (i in 0 until 100) {
+ *                 put(i, "x*100=${i * 100}")
+ *             }
+ *         }
+ *     }
+ *
+ * # Details
+ *
+ * The upstream constructor macro makes use of linker sections to ensure
+ * that a function is run at startup time, with the section name varying
+ * by target operating system (init-array on Linux, the mod-init-func data
+ * section on Apple, the C runtime init section on Windows, the ctors
+ * section on Xtensa, and so on).
+ *
+ * The Kotlin port has no linker section. Each [ctor] call appends a block
+ * to a process-wide registry, and [runCtors] iterates it.
+ *
+ * For static items, upstream generates a lock-once container that is
+ * initialized at startup time. The Kotlin port models that shape with
+ * [io.github.kotlinmania.ctor.macros.CtorStatic]: constructing the handle
+ * registers a synthetic constructor that forces the lock, and the value
+ * accessor lazily forces the initializer on first read.
  */
-public fun <T> ctorStatic(initializer: () -> T): T {
-    val value = initializer()
-    Support.recordCtorOnly { /* already invoked above */ }
-    return value
-}
+public fun ctor(block: () -> Unit): CtorBlock = Support.ctorEntry(block)
 
 /**
- * Marks a block as a library/executable destructor, mirroring upstream's
- * `#[dtor]` proc-macro that is re-exported from the `dtor` crate as
- * `dtor::__dtor_from_ctor`.
+ * Marks a function as a library/executable destructor.
  *
- * Upstream registers the destructor with the platform's at-exit machinery —
- * `atexit` on most platforms, `__cxa_atexit` scoped to the DSO on Apple
- * targets — so the block runs after `main()` returns. There is no portable
- * at-exit hook across the Kotlin Multiplatform target set, so this port
- * records the block in a LIFO queue that callers drain explicitly via
- * [runDtors] (typically from a test-harness shutdown step or an explicit
- * teardown function).
+ * Upstream re-exports the destructor attribute macro from a separate
+ * companion crate. The Kotlin port owns the destructor surface directly;
+ * there is no separate destructor sibling repository because the upstream
+ * companion crate provides only the attribute macro and re-exports the
+ * same support module already covered by [Support].
  *
- * Example:
- *
- * ```kotlin
- * val cleanup = dtor {
- *     println("goodbye")
- * }
- *
- * // Later, when the test harness or main() is winding down:
- * runDtors()
- * ```
+ * The Kotlin port runs destructors in last-in-first-out order from
+ * [runDtors] to mirror the C runtime at-exit contract upstream binds
+ * against.
  */
-public fun dtor(block: () -> Unit) {
-    Support.dtorParse(block)
-}
+public fun dtor(block: () -> Unit): DtorBlock = Support.dtorEntry(block)
 
 /**
- * Drain the registered dtor queue in last-in-first-out order.
+ * Run every registered constructor that has not already fired.
  *
- * This is the Kotlin port's manual replacement for `atexit`. Upstream Rust
- * has no equivalent public function because dtors are wired into the
- * platform loader's shutdown sequence; in Kotlin Multiplatform the caller
- * owns the shutdown sequence and decides when destructors fire.
- *
- * The drain clears the registry as a side effect; a second call is a no-op
- * until new dtors have been registered. LIFO ordering matches upstream
- * because `atexit` runs registered callbacks in reverse registration order:
- * destructors for statics initialized later tear down first.
+ * Kotlin's runtime has no pre-main loader hook on any target this repo
+ * ships, so the host has to trigger the registry explicitly. Typical
+ * placement is the first line of `main`, or the setup hook of a test
+ * fixture.
  */
-public fun runDtors() {
-    Support.runDtors()
-}
+public fun runCtors(): Unit = Support.runCtors()
+
+/**
+ * Run every registered destructor that has not already fired, in reverse
+ * registration order.
+ *
+ * Equivalent to invoking at-exit-registered callbacks at shutdown time.
+ * The Kotlin port surfaces this as an explicit teardown entrypoint; there
+ * is no shutdown hook on most Kotlin Multiplatform targets.
+ */
+public fun runDtors(): Unit = Support.runDtors()
