@@ -22,7 +22,7 @@ plugins {
 }
 
 group = "io.github.kotlinmania"
-version = "0.1.0"
+version = "0.1.1"
 
 // The Android Gradle plugin resolves the SDK location while Gradle builds the
 // task graph — before any task executes — so a project-local Android SDK must
