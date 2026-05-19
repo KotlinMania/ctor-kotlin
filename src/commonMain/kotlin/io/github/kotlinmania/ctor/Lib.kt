@@ -1,4 +1,4 @@
-// port-lint: source src/lib.rs
+// port-lint: source lib.rs
 package io.github.kotlinmania.ctor
 
 import io.github.kotlinmania.ctor.macros.CtorBlock

@@ -1,4 +1,4 @@
-// port-lint: source src/example.rs
+// port-lint: source example.rs
 package io.github.kotlinmania.ctor
 
 import io.github.kotlinmania.ctor.macros.CtorStatic
@@ -54,10 +54,18 @@ private val staticCtor: CtorStatic<Map<Int, String>> = ctorStatic {
  * identifier to capture.
  */
 private val anonymousCtor1 = ctor {
-    log.add("ctor_anonymous (#1)")
+    anonymousCtor()
 }
 
 private val anonymousCtor2 = ctor {
+    anonymousCtorSecond()
+}
+
+private fun anonymousCtor() {
+    log.add("ctor_anonymous (#1)")
+}
+
+private fun anonymousCtorSecond() {
     log.add("ctor_anonymous (#2)")
 }
 
@@ -72,12 +80,20 @@ private val anonymousCtor2 = ctor {
  */
 private val nestedAnonymousCtor = run {
     val ctorHandle = ctor {
-        log.add("ctor_anonymous (#3)")
+        nestedCtor()
     }
     val dtorHandle = dtor {
-        log.add("dtor_anonymous")
+        anonymousDtor()
     }
     ctorHandle to dtorHandle
+}
+
+private fun nestedCtor() {
+    log.add("ctor_anonymous (#3)")
+}
+
+private fun anonymousDtor() {
+    log.add("dtor_anonymous")
 }
 
 /*
@@ -87,26 +103,50 @@ private val nestedAnonymousCtor = run {
  * function.
  */
 private val ctorNamed = ctor {
-    log.add("ctor")
+    ctor()
 }
 
 private val ctorUnsafe = ctor {
-    log.add("ctor_unsafe")
+    ctorUnsafe()
 }
 
 private val dtorNamed = dtor {
-    log.add("dtor")
+    dtor()
 }
 
 private val dtorUnsafe = dtor {
-    log.add("dtor_unsafe")
+    dtorUnsafe()
 }
 
 private val dtorAnonymous1 = dtor {
-    log.add("dtor_anonymous (#1)")
+    dtorAnonymousFirst()
 }
 
 private val dtorAnonymous2 = dtor {
+    dtorAnonymousSecond()
+}
+
+private fun ctor() {
+    log.add("ctor")
+}
+
+private fun ctorUnsafe() {
+    log.add("ctor_unsafe")
+}
+
+private fun dtor() {
+    log.add("dtor")
+}
+
+private fun dtorUnsafe() {
+    log.add("dtor_unsafe")
+}
+
+private fun dtorAnonymousFirst() {
+    log.add("dtor_anonymous (#1)")
+}
+
+private fun dtorAnonymousSecond() {
     log.add("dtor_anonymous (#2")
 }
 
@@ -118,6 +158,10 @@ private object Module {
     }
 
     val dtorModule = dtor {
+        dtorModule()
+    }
+
+    fun dtorModule() {
         log.add("module::dtor_module")
     }
 }
@@ -129,7 +173,7 @@ private object Module {
  * Kotlin port writes to the [log] buffer so the test can assert on the
  * observed order.
  */
-private fun runExample() {
+private fun main() {
     log.add("main!")
     log.add("STATIC_CTOR = ${staticCtor.value}")
     log.add("module::STATIC_CTOR = ${Module.staticCtor.value}")
@@ -158,7 +202,7 @@ internal class ExampleTest {
         assertEquals(10, handles.size)
 
         runCtors()
-        runExample()
+        main()
         runDtors()
 
         assertEquals(mapOf(0 to "foo", 1 to "bar", 2 to "baz"), staticCtor.value)

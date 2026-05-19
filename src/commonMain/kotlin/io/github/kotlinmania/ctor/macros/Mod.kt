@@ -1,4 +1,4 @@
-// port-lint: source src/macros/mod.rs
+// port-lint: source macros/mod.rs
 package io.github.kotlinmania.ctor.macros
 
 import kotlin.concurrent.atomics.AtomicBoolean
@@ -13,8 +13,8 @@ import kotlin.concurrent.atomics.AtomicReference
  * platform's linker sections — the init-array on Linux, the mod-init-func
  * data section on Apple, the C runtime init section on Windows, the
  * startup and exit text sections for shutdown. Kotlin Multiplatform has no
- * equivalent linker hook: code that runs strictly before main is
- * unsupported across every target this repo ships, and most standard
+ * equivalent linker hook: code that runs strictly before main is not
+ * available across every target this repo ships, and most standard
  * library services are not safe to call from such a hook even where the
  * platform exposes one. The Kotlin port therefore translates each
  * attribute macro into a runtime registration call. Consumers register
@@ -28,8 +28,8 @@ import kotlin.concurrent.atomics.AtomicReference
  * link-section selector, the link-section attribute applier, the
  * declarative-form constructor parser, the destructor entry shim, the
  * declarative-form destructor parser, the feature-array dispatcher, the
- * unsafe-marker dispatcher, the no-warn-on-missing-unsafe feature gate,
- * the used-linker feature gate, and the feature unifier. Every one of
+ * safety-marker dispatcher, the missing-safety-warning feature gate, the
+ * used-linker feature gate, and the feature unifier. Every one of
  * those re-exports is a declarative macro whose entire job is compile-time
  * code generation; the Kotlin port collapses each into a runtime function
  * on this object so callers that translated the upstream declarative form
@@ -38,6 +38,7 @@ import kotlin.concurrent.atomics.AtomicReference
 public object Support {
     private val ctorBlocks: AtomicReference<List<CtorBlock>> = AtomicReference(emptyList())
     private val dtorBlocks: AtomicReference<List<DtorBlock>> = AtomicReference(emptyList())
+    private val compileFeatures: AtomicReference<List<Feature>> = AtomicReference(emptyList())
 
     /**
      * Return type for the constructor. Why is this needed?
@@ -56,7 +57,7 @@ public object Support {
      * See the Microsoft init-term reference for the upstream Windows-init
      * contract.
      */
-    public fun ctorRetType(): Unit = Unit
+    public fun ctorRetType(): CtorRetType = Unit
 
     /**
      * Parse a constructor-annotated item as if it were a procedural macro.
@@ -191,12 +192,12 @@ public object Support {
         if (features.any { it == feature }) ifTrue() else ifFalse()
 
     /**
-     * Choose the unsafe branch if the unsafe marker is present in the
-     * upstream declaration, otherwise the safe branch.
+     * Choose the risk-acknowledged branch if the upstream declaration
+     * carries the safety marker, otherwise choose the regular branch.
      *
-     * Kotlin has no unsafe keyword. The marker is preserved as a runtime
-     * flag so callers translating the declarative form can keep the same
-     * conditional shape.
+     * Kotlin has no equivalent keyword. The marker is preserved as a
+     * runtime flag so callers translating the declarative form can keep
+     * the same conditional shape.
      */
     public fun <T> ifUnsafe(isUnsafe: Boolean, ifUnsafe: () -> T, ifSafe: () -> T): T =
         if (isUnsafe) ifUnsafe() else ifSafe()
@@ -205,20 +206,29 @@ public object Support {
      * If the used-linker Cargo feature is active, return [ifTrue],
      * otherwise [ifFalse].
      *
-     * The Kotlin port has no equivalent of the used-linker Cargo feature.
-     * The entrypoint is retained for caller compatibility and always
-     * returns the [ifFalse] branch.
+     * The Kotlin port models compile-time feature gates as runtime support
+     * features. By default no feature is active, but translated callers can
+     * install a feature list through [setCompileFeatures].
      */
-    public fun <T> includeUsedLinkerFeature(ifTrue: () -> T, ifFalse: () -> T): T = ifFalse()
+    public fun <T> includeUsedLinkerFeature(ifTrue: () -> T, ifFalse: () -> T): T =
+        ifHasFeature(Feature.UsedLinker, compileFeatures.load(), ifTrue, ifFalse)
 
     /**
-     * If the no-warn-on-missing-unsafe Cargo feature is active, return
-     * [ifTrue], otherwise [ifFalse].
+     * If the feature that silences missing safety-marker warnings is
+     * active, return [ifTrue], otherwise [ifFalse].
      *
-     * The Kotlin port carries no missing-unsafe deprecation warning so the
-     * entrypoint always returns the [ifFalse] branch.
+     * This shares the same runtime feature list as [includeUsedLinkerFeature].
      */
-    public fun <T> includeNoWarnOnMissingUnsafeFeature(ifTrue: () -> T, ifFalse: () -> T): T = ifFalse()
+    public fun <T> includeNoWarnOnMissingUnsafeFeature(ifTrue: () -> T, ifFalse: () -> T): T =
+        ifHasFeature(Feature.NoWarnOnMissingUnsafe, compileFeatures.load(), ifTrue, ifFalse)
+
+    /**
+     * Replace the active runtime feature list used by the compile-feature
+     * gate helpers.
+     */
+    public fun setCompileFeatures(features: List<Feature>) {
+        compileFeatures.store(features.toList())
+    }
 
     /**
      * Extract constructor and destructor attribute parameters and crate
@@ -267,6 +277,9 @@ public object Support {
         }
     }
 }
+
+/** Return type used by constructor startup entries on every Kotlin target. */
+public typealias CtorRetType = Unit
 
 /**
  * Handle representing a constructor block registered with [Support.ctorEntry].
@@ -373,7 +386,7 @@ public sealed class Feature {
     /** Equivalent of the used-linker Cargo feature. */
     public object UsedLinker : Feature()
 
-    /** Equivalent of the no-warn-on-missing-unsafe Cargo feature. */
+    /** Equivalent of the feature that silences missing safety-marker warnings. */
     public object NoWarnOnMissingUnsafe : Feature()
 
     /** Equivalent of the anonymous attribute parameter. */
