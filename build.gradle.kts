@@ -199,10 +199,18 @@ kotlin {
         binaries.framework { baseName = "Ctor"; xcf.add(this) }
     }
     iosSimulatorArm64 {
-        binaries.framework { baseName = "Ctor"; xcf.add(this) }
+        binaries.framework {
+            baseName = "Ctor"
+            isStatic = true
+            xcf.add(this)
+        }
     }
     iosX64 {
-        binaries.framework { baseName = "Ctor"; xcf.add(this) }
+        binaries.framework {
+            baseName = "Ctor"
+            isStatic = true
+            xcf.add(this)
+        }
     }
 
     tvosArm64 {
@@ -342,8 +350,8 @@ rootProject.extensions.configure<YarnRootExtension>("kotlinYarn") {
     resolution("**/minimatch", "10.2.5")
     resolution("picomatch", "4.0.4")
     resolution("**/picomatch", "4.0.4")
-    resolution("qs", "6.15.1")
-    resolution("**/qs", "6.15.1")
+    resolution("qs", "6.15.2")
+    resolution("**/qs", "6.15.2")
     resolution("socket.io-parser", "4.2.6")
     resolution("**/socket.io-parser", "4.2.6")
     resolution("ws", "8.20.1")

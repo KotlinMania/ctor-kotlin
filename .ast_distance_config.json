@@ -1,5 +1,6 @@
 {
-  "type": "port",
+  "type": "maintenance",
+  "parity_mode": false,
   "name": "ctor-kotlin",
   "source": {
     "path": "tmp/ctor/src",

@@ -179,6 +179,11 @@ private fun main() {
     log.add("module::STATIC_CTOR = ${Module.staticCtor.value}")
 }
 
+private fun assertLogged(message: String) {
+    val index = log.indexOf(message)
+    assertTrue(index >= 0, "$message was not logged")
+}
+
 internal class ExampleTest {
     @Test
     fun example() {
@@ -188,6 +193,7 @@ internal class ExampleTest {
         // constructor-annotated items through linker sections, so the
         // host has to reference them.
         val handles: List<Any> = listOf(
+            staticCtor,
             anonymousCtor1,
             anonymousCtor2,
             nestedAnonymousCtor,
@@ -197,9 +203,10 @@ internal class ExampleTest {
             dtorUnsafe,
             dtorAnonymous1,
             dtorAnonymous2,
+            Module.staticCtor,
             Module.dtorModule,
         )
-        assertEquals(10, handles.size)
+        assertEquals(12, handles.size)
 
         runCtors()
         main()
@@ -207,21 +214,22 @@ internal class ExampleTest {
 
         assertEquals(mapOf(0 to "foo", 1 to "bar", 2 to "baz"), staticCtor.value)
         assertEquals(42, Module.staticCtor.value)
-
-        assertTrue("STATIC_CTOR" in log)
-        assertTrue("module::STATIC_CTOR" in log)
-        assertTrue("ctor" in log)
-        assertTrue("ctor_unsafe" in log)
-        assertTrue("ctor_anonymous (#1)" in log)
-        assertTrue("ctor_anonymous (#2)" in log)
-        assertTrue("ctor_anonymous (#3)" in log)
-        assertTrue("dtor" in log)
-        assertTrue("dtor_unsafe" in log)
-        assertTrue("dtor_anonymous" in log)
-        assertTrue("dtor_anonymous (#1)" in log)
-        assertTrue("dtor_anonymous (#2" in log)
-        assertTrue("module::dtor_module" in log)
-        assertTrue("main!" in log)
+        listOf(
+            "STATIC_CTOR",
+            "ctor_anonymous (#1)",
+            "ctor_anonymous (#2)",
+            "ctor_anonymous (#3)",
+            "ctor",
+            "ctor_unsafe",
+            "dtor_unsafe",
+            "dtor",
+            "dtor_anonymous",
+            "dtor_anonymous (#1)",
+            "dtor_anonymous (#2",
+            "module::STATIC_CTOR",
+            "module::dtor_module",
+            "main!",
+        ).forEach(::assertLogged)
 
         val mainIndex = log.indexOf("main!")
         val dtorIndex = log.indexOf("module::dtor_module")
