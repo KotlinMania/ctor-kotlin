@@ -1,4 +1,3 @@
-// port-lint: ignore
 // Tracking file for the upstream declarative submodule in src/lib.rs. The
 // upstream submodule re-exports two declarative-macro entry points under
 // shorter names: the constructor parser is re-exported as the constructor
