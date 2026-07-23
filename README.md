@@ -134,7 +134,7 @@ These projects are dual-licensed under the Apache License, Version 2.0 and the M
 
 ```kotlin
 dependencies {
-    implementation("io.github.kotlinmania:ctor-kotlin:0.1.1")
+    implementation("io.github.kotlinmania:ctor-kotlin:0.1.0")
 }
 ```
 
