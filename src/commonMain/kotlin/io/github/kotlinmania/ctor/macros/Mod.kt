@@ -287,7 +287,9 @@ public typealias CtorRetType = Unit
  * Each block tracks whether it has already fired so that [Support.runCtors]
  * can honor the upstream wasm idempotency guarantee on every target.
  */
-public class CtorBlock internal constructor(private val block: () -> Unit) {
+public class CtorBlock internal constructor(
+    private val block: () -> Unit,
+) {
     private val invoked: AtomicBoolean = AtomicBoolean(false)
 
     /**
@@ -310,7 +312,9 @@ public class CtorBlock internal constructor(private val block: () -> Unit) {
  * constructors at runtime; the upstream distinction is which linker
  * section the thunk lands in.
  */
-public class DtorBlock internal constructor(private val block: () -> Unit) {
+public class DtorBlock internal constructor(
+    private val block: () -> Unit,
+) {
     private val invoked: AtomicBoolean = AtomicBoolean(false)
 
     /**
@@ -334,7 +338,9 @@ public class DtorBlock internal constructor(private val block: () -> Unit) {
  * constructing the handle registers a poke into the global constructor
  * registry so [Support.runCtors] forces it eagerly.
  */
-public class CtorStatic<T : Any> internal constructor(private val init: () -> T) {
+public class CtorStatic<T : Any> internal constructor(
+    private val init: () -> T,
+) {
     private val storage: AtomicReference<T?> = AtomicReference(null)
 
     init {
@@ -393,10 +399,14 @@ public sealed class Feature {
     public object Anonymous : Feature()
 
     /** Equivalent of a link-section override carrying a section name. */
-    public data class LinkSection(public val section: String) : Feature()
+    public data class LinkSection(
+        public val section: String,
+    ) : Feature()
 
     /** Equivalent of a crate-path override carrying a path. */
-    public data class CratePath(public val path: String) : Feature()
+    public data class CratePath(
+        public val path: String,
+    ) : Feature()
 }
 
 /**
@@ -407,7 +417,14 @@ public sealed class Feature {
  */
 public sealed class Meta {
     public object UsedLinker : Meta()
+
     public object Anonymous : Meta()
-    public data class LinkSection(public val section: String) : Meta()
-    public data class CratePath(public val path: String) : Meta()
+
+    public data class LinkSection(
+        public val section: String,
+    ) : Meta()
+
+    public data class CratePath(
+        public val path: String,
+    ) : Meta()
 }
