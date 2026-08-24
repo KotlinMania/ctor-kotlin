@@ -33,14 +33,15 @@ import kotlin.test.assertTrue
 private val log: MutableList<String> = mutableListOf()
 
 /** This is an immutable "static", evaluated at init time. */
-private val staticCtor: CtorStatic<Map<Int, String>> = ctorStatic {
-    val m = mutableMapOf<Int, String>()
-    m[0] = "foo"
-    m[1] = "bar"
-    m[2] = "baz"
-    log.add("STATIC_CTOR")
-    m.toMap()
-}
+private val staticCtor: CtorStatic<Map<Int, String>> =
+    ctorStatic {
+        val m = mutableMapOf<Int, String>()
+        m[0] = "foo"
+        m[1] = "bar"
+        m[2] = "baz"
+        log.add("STATIC_CTOR")
+        m.toMap()
+    }
 
 /*
  * Upstream defines two anonymous constructor items with the same upstream
@@ -53,13 +54,15 @@ private val staticCtor: CtorStatic<Map<Int, String>> = ctorStatic {
  * affordance is dropped: the Kotlin block lambda has no addressable
  * identifier to capture.
  */
-private val anonymousCtor1 = ctor {
-    anonymousCtor()
-}
+private val anonymousCtor1 =
+    ctor {
+        anonymousCtor()
+    }
 
-private val anonymousCtor2 = ctor {
-    anonymousCtorSecond()
-}
+private val anonymousCtor2 =
+    ctor {
+        anonymousCtorSecond()
+    }
 
 private fun anonymousCtor() {
     log.add("ctor_anonymous (#1)")
@@ -78,15 +81,18 @@ private fun anonymousCtorSecond() {
  * port pairs the two handles in a single `run` block so the unit-typed
  * sub-scope is preserved in spirit.
  */
-private val nestedAnonymousCtor = run {
-    val ctorHandle = ctor {
-        nestedCtor()
+private val nestedAnonymousCtor =
+    run {
+        val ctorHandle =
+            ctor {
+                nestedCtor()
+            }
+        val dtorHandle =
+            dtor {
+                anonymousDtor()
+            }
+        ctorHandle to dtorHandle
     }
-    val dtorHandle = dtor {
-        anonymousDtor()
-    }
-    ctorHandle to dtorHandle
-}
 
 private fun nestedCtor() {
     log.add("ctor_anonymous (#3)")
@@ -102,29 +108,35 @@ private fun anonymousDtor() {
  * sequence by naming the registration property after the upstream
  * function.
  */
-private val ctorNamed = ctor {
-    ctor()
-}
+private val ctorNamed =
+    ctor {
+        ctor()
+    }
 
-private val ctorUnsafe = ctor {
-    ctorUnsafe()
-}
+private val ctorUnsafe =
+    ctor {
+        ctorUnsafe()
+    }
 
-private val dtorNamed = dtor {
-    dtor()
-}
+private val dtorNamed =
+    dtor {
+        dtor()
+    }
 
-private val dtorUnsafe = dtor {
-    dtorUnsafe()
-}
+private val dtorUnsafe =
+    dtor {
+        dtorUnsafe()
+    }
 
-private val dtorAnonymous1 = dtor {
-    dtorAnonymousFirst()
-}
+private val dtorAnonymous1 =
+    dtor {
+        dtorAnonymousFirst()
+    }
 
-private val dtorAnonymous2 = dtor {
-    dtorAnonymousSecond()
-}
+private val dtorAnonymous2 =
+    dtor {
+        dtorAnonymousSecond()
+    }
 
 private fun ctor() {
     log.add("ctor")
@@ -152,14 +164,16 @@ private fun dtorAnonymousSecond() {
 
 /** A module with a static ctor/dtor. */
 private object Module {
-    val staticCtor: CtorStatic<Int> = ctorStatic {
-        log.add("module::STATIC_CTOR")
-        42
-    }
+    val staticCtor: CtorStatic<Int> =
+        ctorStatic {
+            log.add("module::STATIC_CTOR")
+            42
+        }
 
-    val dtorModule = dtor {
-        dtorModule()
-    }
+    val dtorModule =
+        dtor {
+            dtorModule()
+        }
 
     fun dtorModule() {
         log.add("module::dtor_module")
@@ -192,20 +206,21 @@ internal class ExampleTest {
         // scope `val`s the way the upstream Rust crate eagerly drives
         // constructor-annotated items through linker sections, so the
         // host has to reference them.
-        val handles: List<Any> = listOf(
-            staticCtor,
-            anonymousCtor1,
-            anonymousCtor2,
-            nestedAnonymousCtor,
-            ctorNamed,
-            ctorUnsafe,
-            dtorNamed,
-            dtorUnsafe,
-            dtorAnonymous1,
-            dtorAnonymous2,
-            Module.staticCtor,
-            Module.dtorModule,
-        )
+        val handles: List<Any> =
+            listOf(
+                staticCtor,
+                anonymousCtor1,
+                anonymousCtor2,
+                nestedAnonymousCtor,
+                ctorNamed,
+                ctorUnsafe,
+                dtorNamed,
+                dtorUnsafe,
+                dtorAnonymous1,
+                dtorAnonymous2,
+                Module.staticCtor,
+                Module.dtorModule,
+            )
         assertEquals(12, handles.size)
 
         runCtors()
