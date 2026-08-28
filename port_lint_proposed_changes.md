@@ -1,6 +1,6 @@
 # port-lint Proposed Changes
 
-**Generated:** 2026-05-19
+**Generated:** 2026-08-28
 **Source:** tmp/ctor/src
 **Target:** src/commonMain/kotlin/io/github/kotlinmania/ctor
 
